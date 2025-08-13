@@ -15,7 +15,6 @@
     "canCrossFilterDataSource": false
   },
   "main": "widget",
-  "setting": "setting",
   "icon": {
     "svg": "assets/icon.svg",
     "properties": {
@@ -25,7 +24,8 @@
     }
   },
   "defaultConfig": {
-    "layerId": ""
+    "layerId": "",
+    "allowedFields": []
   },
   "translatedLocales": ["en"],
   "defaultSize": {
