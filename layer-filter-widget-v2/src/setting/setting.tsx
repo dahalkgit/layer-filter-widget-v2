@@ -11,6 +11,7 @@ interface State {
   selectedDataSourceId: string
   availableFields: Array<{ name: string, alias: string, type: string }>
   loadingFields: boolean
+  fieldsError: string
 }
 
 export default class Setting extends React.PureComponent<AllWidgetSettingProps<IMConfig>, State> {
@@ -19,7 +20,8 @@ export default class Setting extends React.PureComponent<AllWidgetSettingProps<I
     this.state = {
       selectedDataSourceId: this.props.config?.layerId || '',
       availableFields: [],
-      loadingFields: false
+      loadingFields: false,
+      fieldsError: ''
     }
   }
 
@@ -39,11 +41,12 @@ export default class Setting extends React.PureComponent<AllWidgetSettingProps<I
     const { config } = this.props
     if (!config?.layerId) return
 
-    this.setState({ loadingFields: true })
+    this.setState({ loadingFields: true, fieldsError: '', availableFields: [] })
 
     try {
       const dataSource = DataSourceManager.getInstance().getDataSource(config.layerId) as QueriableDataSource
-      if (dataSource && dataSource.layer) {
+      
+      if (dataSource && dataSource.layer && dataSource.layer.fields) {
         // Get fields from the data source
         const fields = dataSource.layer.fields || []
         const availableFields = fields
@@ -55,10 +58,19 @@ export default class Setting extends React.PureComponent<AllWidgetSettingProps<I
           }))
 
         this.setState({ availableFields, loadingFields: false })
+      } else {
+        // If we can't get fields from data source, show error but don't crash
+        this.setState({ 
+          fieldsError: 'Unable to load fields from data source. Fields will be loaded when the widget runs.',
+          loadingFields: false 
+        })
       }
     } catch (error) {
       console.error('Error loading fields:', error)
-      this.setState({ loadingFields: false })
+      this.setState({ 
+        fieldsError: 'Error loading fields. They will be available when the widget runs.',
+        loadingFields: false 
+      })
     }
   }
 
@@ -114,7 +126,7 @@ export default class Setting extends React.PureComponent<AllWidgetSettingProps<I
 
   render() {
     const { config, useDataSources } = this.props
-    const { availableFields, loadingFields } = this.state
+    const { availableFields, loadingFields, fieldsError } = this.state
     const allowedFields = config?.allowedFields || []
 
     return (
@@ -193,6 +205,17 @@ export default class Setting extends React.PureComponent<AllWidgetSettingProps<I
                   <div css={{ padding: '16px', textAlign: 'center', color: '#666' }}>
                     Loading available fields...
                   </div>
+                ) : fieldsError ? (
+                  <div css={{
+                    padding: '12px',
+                    backgroundColor: '#fff3cd',
+                    borderRadius: '4px',
+                    border: '1px solid #ffeaa7',
+                    color: '#856404',
+                    marginBottom: '12px'
+                  }}>
+                    {fieldsError}
+                  </div>
                 ) : availableFields.length > 0 ? (
                   <div css={{
                     maxHeight: '300px',
@@ -217,7 +240,7 @@ export default class Setting extends React.PureComponent<AllWidgetSettingProps<I
                           <div css={{ fontWeight: 'bold', fontSize: '14px' }}>
                             {field.alias}
                           </div>
-                          <div css={{ fontSize: '12px', color: '#fcfcfc' }}>
+                          <div css={{ fontSize: '12px', color: '#6c757d' }}>
                             {field.name} ({field.type})
                           </div>
                         </div>
@@ -225,7 +248,7 @@ export default class Setting extends React.PureComponent<AllWidgetSettingProps<I
                     ))}
                   </div>
                 ) : (
-                  <div css={{ padding: '16px', textAlign: 'center', color: '#ffffff' }}>
+                  <div css={{ padding: '16px', textAlign: 'center', color: '#6c757d' }}>
                     No compatible fields found in the selected layer.
                   </div>
                 )}
@@ -234,7 +257,7 @@ export default class Setting extends React.PureComponent<AllWidgetSettingProps<I
                   <div css={{
                     marginTop: '12px',
                     padding: '12px',
-                    backgroundColor: '#484a4b',
+                    backgroundColor: '#e9ecef',
                     borderRadius: '4px'
                   }}>
                     <strong>Selected Fields ({allowedFields.length}):</strong>
