@@ -1,0 +1,35 @@
+{
+  "name": "layer-filter-widget-v2",
+  "label": "Layer Filter Widget",
+  "type": "widget",
+  "version": "1.17.0",
+  "description": "A widget that allows users to filter map layers by field attributes with search functionality",
+  "author": "Your Organization",
+  "copyright": "",
+  "license": "",
+  "exbVersion": "1.17.0",
+  "properties": {
+    "hasEmbeddedLayout": false,
+    "supportInlineEditing": false,
+    "supportRepeat": false,
+    "canCrossFilterDataSource": false
+  },
+  "main": "widget",
+  "setting": "setting",
+  "icon": {
+    "svg": "assets/icon.svg",
+    "properties": {
+      "color": "#0079c1",
+      "size": 16,
+      "inlineSvg": true
+    }
+  },
+  "defaultConfig": {
+    "layerId": ""
+  },
+  "translatedLocales": ["en"],
+  "defaultSize": {
+    "width": 300,
+    "height": 400
+  }
+}
