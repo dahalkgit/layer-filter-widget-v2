@@ -15,17 +15,18 @@
     "canCrossFilterDataSource": false
   },
   "main": "widget",
+  "setting": "setting",
   "icon": {
     "svg": "assets/icon.svg",
     "properties": {
-      "color": "#0079c1",
+      "color": "
+#0079c1",
       "size": 16,
       "inlineSvg": true
     }
   },
   "defaultConfig": {
-    "layerId": "",
-    "allowedFields": []
+    "layerId": ""
   },
   "translatedLocales": ["en"],
   "defaultSize": {
