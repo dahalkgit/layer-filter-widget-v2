@@ -1,8 +1,7 @@
 /** @jsx jsx */
-import { React, jsx, AllWidgetProps, IMState, ReactRedux, DataSourceManager, QueriableDataSource, DataSource } from 'jimu-core'
+import { React, jsx, AllWidgetProps, DataSourceManager, QueriableDataSource } from 'jimu-core'
 import { JimuMapViewComponent, JimuMapView } from 'jimu-arcgis'
 import { Select, Option, TextInput, Button, Loading } from 'jimu-ui'
-import FeatureLayer from 'esri/layers/FeatureLayer'
 import { IMConfig } from '../config'
 
 interface State {
@@ -12,11 +11,13 @@ interface State {
   uniqueValues: string[]
   selectedValue: string
   loading: boolean
-  layer: FeatureLayer
+  layer: any
   jimuLayerView: any
 }
 
 export default class Widget extends React.PureComponent<AllWidgetProps<IMConfig>, State> {
+  private _layerView?: __esri.FeatureLayerView
+
   constructor(props) {
     super(props)
     this.state = {
@@ -48,36 +49,34 @@ export default class Widget extends React.PureComponent<AllWidgetProps<IMConfig>
   loadLayer = async () => {
     const { config } = this.props
     const { jimuMapView } = this.state
-
     if (!config?.layerId || !jimuMapView) return
 
     try {
-      // Find the jimuLayerView using the configured layerId
       const jimuLayerViews = jimuMapView.jimuLayerViews
-      let targetJimuLayerView = null
+      let targetJimuLayerView: any = null
 
-      // Search through all jimuLayerViews to find the one with matching layerId
-      for (const [key, jimuLayerView] of Object.entries(jimuLayerViews)) {
-        if (jimuLayerView.layerDataSourceId === config.layerId) {
-          targetJimuLayerView = jimuLayerView
+      for (const [, jlv] of Object.entries(jimuLayerViews)) {
+        if ((jlv as any).layerDataSourceId === config.layerId) {
+          targetJimuLayerView = jlv
           break
         }
       }
 
       if (targetJimuLayerView) {
-        // Use the recommended method to create layer data source
         const layerDataSource = await targetJimuLayerView.createLayerDataSource()
-        
-        if (layerDataSource && layerDataSource.layer) {
-          const layer = layerDataSource.layer as FeatureLayer
-          this.setState({ layer, jimuLayerView: targetJimuLayerView })
-        }
-      } else {
-        // Fallback: try to find layer directly in the map
-        const layer = jimuMapView.view.map.findLayerById(config.layerId) as FeatureLayer
-        if (layer) {
-          this.setState({ layer })
-        }
+        const layer = (layerDataSource as any)?.layer
+        const layerView = await targetJimuLayerView.getLayerView()
+        this._layerView = layerView as __esri.FeatureLayerView
+        this.setState({ layer, jimuLayerView: targetJimuLayerView })
+        return
+      }
+
+      // Fallback: search by map layer id
+      const layer = jimuMapView.view.map.findLayerById(config.layerId) as __esri.FeatureLayer
+      if (layer) {
+        const layerView = await jimuMapView.view.whenLayerView(layer)
+        this._layerView = layerView as __esri.FeatureLayerView
+        this.setState({ layer, jimuLayerView: null })
       }
     } catch (error) {
       console.error('Error loading layer:', error)
@@ -98,12 +97,14 @@ export default class Widget extends React.PureComponent<AllWidgetProps<IMConfig>
       query.returnDistinctValues = true
       query.outFields = [fieldName]
       query.returnGeometry = false
+      // Helps some services when using distinct
+      query.orderByFields = [fieldName]
 
       const result = await this.state.layer.queryFeatures(query)
       const values = result.features
         .map(feature => feature.attributes[fieldName])
         .filter(value => value != null && value !== '')
-        .sort()
+        .sort((a, b) => String(a).localeCompare(String(b)))
 
       this.setState({ uniqueValues: values, loading: false })
     } catch (error) {
@@ -121,102 +122,107 @@ export default class Widget extends React.PureComponent<AllWidgetProps<IMConfig>
   }
 
   applyFilter = async () => {
-    const { selectedField, selectedValue, layer, jimuLayerView } = this.state
+    const { selectedField, selectedValue } = this.state
+    const layer: any = this.state.layer
+    const layerView = this._layerView
 
     if (!layer || !selectedField || !selectedValue) return
 
-    const expression = `${selectedField} = '${selectedValue}'`
-    
+    // Escape single quotes in value
+    const expression = `${selectedField} = '${String(selectedValue).replace(/'/g, "''")}'`
+
     try {
-      // Apply filter using jimuLayerView if available
-      if (jimuLayerView) {
-        // Use jimuLayerView to apply filter
-        await jimuLayerView.setDefinitionExpression(expression)
-      } else {
-        // Fallback to direct layer filtering
+      // 1) Prefer LayerView filter (per-view, fast)
+      if (layerView && 'filter' in layerView) {
+        ;(layerView as any).filter = { where: expression }
+      }
+      // 2) Fallback: mutate layer definition
+      else if ('definitionExpression' in layer) {
         layer.definitionExpression = expression
+      }
+      // 3) Last resort: push query to the data source (keeps ExB data flow consistent)
+      else {
+        const ds = DataSourceManager.getInstance().getDataSource(this.props.config.layerId) as QueriableDataSource
+        if (ds?.updateQueryParams) {
+          ds.updateQueryParams({ where: expression }, this.props.id)
+        }
       }
 
       // Zoom to filtered features
-      const queryResult = await layer.queryExtent({ where: expression })
-      if (queryResult.extent) {
-        this.state.jimuMapView.view.goTo(queryResult.extent.expand(1.2))
+      if (layer?.queryExtent) {
+        const { extent } = await layer.queryExtent({ where: expression })
+        if (extent) await this.state.jimuMapView.view.goTo(extent.expand(1.2))
       }
     } catch (error) {
       console.error('Error applying filter:', error)
-      // Fallback to direct layer filtering if jimuLayerView method fails
-      layer.definitionExpression = expression
-      
-      // Still try to zoom
-      try {
-        const queryResult = await layer.queryExtent({ where: expression })
-        if (queryResult.extent) {
-          this.state.jimuMapView.view.goTo(queryResult.extent.expand(1.2))
-        }
-      } catch (zoomError) {
-        console.error('Error zooming to filtered features:', zoomError)
-      }
     }
   }
 
   clearFilter = async () => {
-    const { layer, jimuLayerView } = this.state
-    
-    if (!layer) return
+    const layer: any = this.state.layer
+    const layerView = this._layerView
 
     try {
-      // Clear filter using jimuLayerView if available
-      if (jimuLayerView) {
-        await jimuLayerView.setDefinitionExpression('')
-      } else {
-        // Fallback to direct layer filtering
+      if (layerView && 'filter' in layerView) {
+        ;(layerView as any).filter = null
+      }
+      if ('definitionExpression' in layer) {
         layer.definitionExpression = ''
       }
-      
+      const ds = DataSourceManager.getInstance().getDataSource(this.props.config.layerId) as QueriableDataSource
+      if (ds?.updateQueryParams) {
+        ds.updateQueryParams({ where: '' }, this.props.id)
+      }
+
       this.setState({ selectedValue: '', searchValue: '' })
     } catch (error) {
       console.error('Error clearing filter:', error)
-      // Fallback to direct layer filtering
-      layer.definitionExpression = ''
-      this.setState({ selectedValue: '', searchValue: '' })
     }
   }
 
   getFilteredValues = () => {
     const { uniqueValues, searchValue } = this.state
     if (!searchValue) return uniqueValues
-
-    return uniqueValues.filter(value => 
-      value.toString().toLowerCase().includes(searchValue.toLowerCase())
+    return uniqueValues.filter(value =>
+      value != null && String(value).toLowerCase().includes(searchValue.toLowerCase())
     )
   }
 
   getFieldOptions = () => {
     const { layer } = this.state
     const { config } = this.props
-    
     if (!layer || !layer.fields) return []
 
-    // Get allowed fields from config
     const allowedFields = config?.allowedFields || []
-    
-    // If no fields are configured, show all compatible fields (fallback)
-    if (allowedFields.length === 0) {
-      return layer.fields
-        .filter(field => field.type === 'string' || field.type === 'small-integer' || field.type === 'integer' || field.type === 'double')
-        .map(field => ({
-          label: field.alias || field.name,
-          value: field.name
-        }))
+
+    const allowedEsri = new Set([
+      'esriFieldTypeString',
+      'esriFieldTypeSmallInteger',
+      'esriFieldTypeInteger',
+      'esriFieldTypeDouble'
+    ])
+    const allowedJimu = new Set([
+      'string', 'String',
+      'small-integer', 'SmallInteger',
+      'integer', 'Integer',
+      'double', 'Double',
+      'number', 'Number', 'single', 'Single'
+    ])
+
+    const isCompatible = (t?: string) => {
+      const type = (t ?? '').toString()
+      return allowedEsri.has(type) || allowedJimu.has(type)
     }
 
-    // Filter fields based on configuration
-    return layer.fields
-      .filter(field => allowedFields.includes(field.name))
-      .map(field => ({
-        label: field.alias || field.name,
-        value: field.name
-      }))
+    const base = layer.fields.filter(f => isCompatible(f.type))
+
+    if (allowedFields.length === 0) {
+      return base.map(f => ({ label: f.alias || f.name, value: f.name }))
+    }
+
+    return base
+      .filter(f => allowedFields.includes(f.name))
+      .map(f => ({ label: f.alias || f.name, value: f.name }))
   }
 
   render() {
@@ -225,11 +231,7 @@ export default class Widget extends React.PureComponent<AllWidgetProps<IMConfig>
 
     if (!config?.layerId) {
       return (
-        <div css={{
-          padding: '20px',
-          textAlign: 'center',
-          color: '#666'
-        }}>
+        <div css={{ padding: '20px', textAlign: 'center', color: '#666' }}>
           Please configure the widget by selecting a layer.
         </div>
       )
@@ -299,7 +301,7 @@ export default class Widget extends React.PureComponent<AllWidgetProps<IMConfig>
             >
               {filteredValues.map((value, index) => (
                 <Option key={index} value={value}>
-                  {value}
+                  {String(value)}
                 </Option>
               ))}
             </Select>
